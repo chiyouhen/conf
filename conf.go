@@ -1,16 +1,17 @@
 package conf
 //
 import (
+    "os"
     "io"
+    "io/ioutil"
     "bytes"
     "bufio"
     "strings"
     "regexp"
-    "io/ioutil"
     "path/filepath"
-    "os"
     "strconv"
     "time"
+    "fmt"
 )
 
 var (
@@ -18,7 +19,7 @@ var (
         "#": true,
         ";": true,
     }
-    validKeyPattern, _ = regexp.Compile("^[A-Za-z][A-Za-z0-9-_]*")
+    validKeyPattern, _ = regexp.Compile("^[A-Za-z][A-Za-z0-9-_]*$")
     boolMap = map[string]bool{
         "on": true,
         "off": false,
@@ -30,11 +31,13 @@ var (
 )
 
 type ConfError struct {
-    errMsg string
+    msg string
+    filename string
+    lineno int
 }
 
 func (e *ConfError) Error() string {
-    return e.errMsg
+    return fmt.Sprintf("%s in '%s' line %d", e.msg, e.filename, e.lineno)
 }
 
 type Conf struct {
@@ -59,8 +62,19 @@ func ReadData(rd io.Reader) (data map[string]interface{}, err error) {
     var lv int
     var k string
     var v interface{}
+    var fp *os.File
+
+    var lineno = 0
+    var filename = "<io.Reader>"
+
+    fp, ok = rd.(*os.File)
+    if ok {
+        filename = fp.Name()
+    }
+
     stack = append(stack, curr)
     for sc.Scan() {
+        lineno ++
         l = sc.Text()
         l = strings.TrimSpace(l)
         if len(l) == 0 {
@@ -99,7 +113,7 @@ func ReadData(rd io.Reader) (data map[string]interface{}, err error) {
                 // array here
                 k = string(k[1:])
                 if ! validKeyPattern.Match([]byte(k)) {
-                    err = &ConfError{"invalid key"}
+                    err = &ConfError{"invalid key", filename, lineno}
                     return
                 }
                 if _, ok = curr[k]; ! ok {
@@ -109,11 +123,11 @@ func ReadData(rd io.Reader) (data map[string]interface{}, err error) {
             } else {
                 // map here
                 if ! validKeyPattern.Match([]byte(k)) {
-                    err = &ConfError{"invalid key"}
+                    err = &ConfError{"invalid key", filename, lineno}
                     return
                 }
                 if _, ok = curr[k]; ok {
-                    err = &ConfError{"duplicate key"}
+                    err = &ConfError{"duplicate key", filename, lineno}
                     return
                 }
                 curr[k] = v
@@ -123,7 +137,7 @@ func ReadData(rd io.Reader) (data map[string]interface{}, err error) {
         } else {
             g = strings.SplitN(l, ":", 2)
             if len(g) != 2 {
-                err = &ConfError{"syntax error"}
+                err = &ConfError{"syntax error", filename, lineno}
                 return
             }
             k = strings.TrimSpace(g[0])
@@ -131,7 +145,7 @@ func ReadData(rd io.Reader) (data map[string]interface{}, err error) {
             if k[0] == '@' {
                 k = string(k[1:])
                 if ! validKeyPattern.Match([]byte(k)) {
-                    err = &ConfError{"invalid key"}
+                    err = &ConfError{"invalid key", filename, lineno}
                     return
                 }
                 if _, ok = curr[k]; ! ok {
@@ -140,7 +154,7 @@ func ReadData(rd io.Reader) (data map[string]interface{}, err error) {
                 curr[k] = append(curr[k].([]interface{}), v)
             } else {
                 if ! validKeyPattern.Match([]byte(k)) {
-                    err = &ConfError{"invalid key"}
+                    err = &ConfError{"invalid key", filename, lineno}
                     return
                 }
                 curr[k] = v
@@ -201,7 +215,7 @@ func LoadDirData(dir string) (data map[string]interface{}, err error) {
     for _, f = range files {
         k = strings.TrimSuffix(f.Name(), ".conf")
         if _, ok = data[k]; ! ok {
-            data[k], err = LoadFile(filepath.Join(dir, f.Name()))
+            data[k], err = LoadFileData(filepath.Join(dir, f.Name()))
             if err != nil {
                 return
             }
@@ -210,7 +224,7 @@ func LoadDirData(dir string) (data map[string]interface{}, err error) {
     for _, f = range dirs {
         k = f.Name()
         if _, ok = data[k]; ! ok {
-            data[k], err = LoadDir(filepath.Join(dir, f.Name()))
+            data[k], err = LoadDirData(filepath.Join(dir, f.Name()))
             if err != nil {
                 return
             }
@@ -222,6 +236,12 @@ func LoadDirData(dir string) (data map[string]interface{}, err error) {
 func Read(rd io.Reader) (cf *Conf, err error) {
     cf = &Conf{}
     err = cf.Read(rd)
+    return
+}
+
+func Parse(b []byte) (cf *Conf, err error) {
+    cf = &Conf{}
+    err = cf.Parse(b)
     return
 }
 
@@ -238,7 +258,7 @@ func LoadDir(confRoot string) (cf *Conf, err error) {
 }
 
 func (cf *Conf) Read(rd io.Reader) (err error) {
-    cf.data, err = Read(rd)
+    cf.data, err = ReadData(rd)
     return
 }
 
@@ -248,12 +268,7 @@ func (cf *Conf) Parse(b []byte) (err error) {
 }
 
 func (cf *Conf) LoadFile(filename string) (err error) {
-    var rd io.Reader
-    rd, err = os.OpenFile(filename, os.O_RDONLY, 0644)
-    if err != nil {
-        return
-    }
-    err = cf.Read(rd)
+    cf.data, err = LoadFileData(filename)
     if err != nil {
         cf.confRoot = filepath.Dir(filename)
     }
@@ -271,6 +286,14 @@ func (cf *Conf) draw() *Conf {
     ret.confRoot = cf.confRoot
     ret.prefix = cf.prefix
     return ret
+}
+
+func (cf *Conf) SetConfRoot(confRoot string) {
+    cf.confRoot = confRoot
+}
+
+func (cf *Conf) SetPrefix(prefix string) {
+    cf.prefix = prefix
 }
 
 func (cf *Conf) Find(p... string) *Conf {
