@@ -91,3 +91,75 @@ type SyntaxHandler interface {
     Dump(data interface{}) ([]byte, error)
 }
 ```
+
+# Introduction of Hdf
+The first time I know hdf is when I do some work on [HHVM](https://github.com/facebook/hhvm). They does not recommand using this configure file format now, but I like it. 
+
+## Syntax
+### Key-value
+``
+key = value
+``
+The value contains all things after the equal mark, include quotation-marks, comment marks.
+```
+name = "Jim" # person's name
+```
+In this case, the value is string `"Jim" # person's name`, not just `Jim`.
+
+### Block
+A block is between a pair of `{}`.
+```
+log {
+    file_path: /var/log/hello.log
+    auto_rotate: false
+}
+```
+In json format is:
+```
+{
+    "log": {
+        "file_path": "/var/log/hello.log",
+        "auto_rotate": "false"
+    }
+}
+```
+In hhvm, `{` can be in indivadual line, but it looks very strange that the key-value holds the whole line but block can be in two line. So in the default `SyntaxHandlerHdf`, this is not allowed. For the same reason, to close a block, `}` must be in a individual line.
+So this lib may not parse all hdf file from hhvm.
+
+### Array
+No mark for array defined in hdf. If a key appears twice or more, it would be an array.
+```
+server {
+    port = 80
+}
+```
+In json:
+```
+{
+    "server": {
+        "port": "80"
+    }
+}
+```
+and if server appears twice:
+```
+server {
+   port = 80
+}
+server {
+   port = 443
+}
+```
+in json:
+```
+{
+    "server": [
+        {
+            "port": "80"
+        },
+        {
+            "port": "443"
+        }
+    ]
+}
+```
