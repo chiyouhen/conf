@@ -76,6 +76,16 @@ func (cf *Conf) LoadDir(confRoot string) (err error) {
     return
 }
 
+func (cf *Conf) Dump() (b []byte, err error) {
+    b, err = cf.Handler.Dump(cf.data)
+    return
+}
+
+func (cf *Conf) Write(wr io.Writer) (n int, err error) {
+    n, err = cf.Handler.Write(wr, cf.data)
+    return
+}
+
 func (cf *Conf) draw() *Conf {
     var ret = new(Conf)
     ret.confRoot = cf.confRoot

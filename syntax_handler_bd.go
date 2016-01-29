@@ -4,6 +4,7 @@ import (
     "os"
     "io"
     "io/ioutil"
+    "fmt"
     "bytes"
     "bufio"
     "strings"
@@ -207,10 +208,107 @@ func (h *SyntaxHandlerBD) LoadDir(dir string) (data interface{}, err error) {
     return
 }
 
-func (h *SyntaxHandlerBD) Write(wr io.Writer, data interface{}) (err error) {
-    return nil
+func (h *SyntaxHandlerBD) dumpkv(key string, data interface{}, level int) (b []byte, err error) {
+    b = make([]byte, 0, 0)
+    var bb []byte
+    err = nil
+    switch data.(type) {
+        case map[string]interface{}:
+            bb = []byte(fmt.Sprintf("[%s%s]\n", strings.Repeat(".", level), key))
+            b = append(b, bb...)
+            var kvs = make([]string, 0, 0)
+            var sections = make([]string, 0, 0)
+            var arrays = make([]string, 0, 0)
+            var k string
+            var v interface{}
+            for k, v = range data.(map[string]interface{}) {
+                switch v.(type) {
+                    case string:
+                        kvs = append(kvs, k)
+                    case map[string]interface{}:
+                        sections = append(sections, k)
+                    case []interface{}:
+                        switch v.([]interface{})[0].(type) {
+                            case string:
+                                kvs = append(kvs, k)
+                            default:
+                                arrays = append(arrays, k)
+                        }
+                }
+            }
+            kvs = append(kvs, arrays...)
+            kvs = append(kvs, sections...)
+            for _, k = range kvs {
+                v = data.(map[string]interface{})[k]
+                bb, err = h.dumpkv(k, v, level + 1)
+                if err != nil {
+                    return
+                }
+                b = append(b, bb...)
+            }
+        case []interface{}:
+            var v interface{}
+            var kvs = make([]interface{}, 0, 0)
+            var sections = make([]interface{}, 0, 0)
+            for _, v = range data.([]interface{}) {
+                switch v.(type) {
+                    case string:
+                        kvs = append(kvs, v)
+                    case map[string]interface{}:
+                        sections = append(sections, v)
+                }
+            }
+            kvs = append(kvs, sections...)
+            for _, v = range kvs {
+                bb, err = h.dumpkv("@" + key, v, level)
+                if err != nil {
+                    return
+                }
+                b = append(b, bb...)
+            }
+        default:
+            bb = []byte(fmt.Sprintf("%s: %s\n", key, data.(string)))
+            if err != nil {
+                return
+            }
+            b = append(b, bb...)
+    }
+    return
 }
 
-func (h *SyntaxHandlerBD) Dump(b []byte, data interface{}) (n int, err error) {
-    return 0, nil
+func (h *SyntaxHandlerBD) Write(wr io.Writer, data interface{}) (n int, err error) {
+    var b []byte
+    b, err = h.Dump(data)
+    if err != nil {
+        return
+    }
+    var i = 0
+    n = 0
+    var l = len(b)
+    for n < l {
+        i, err = wr.Write(b[n:])
+        n += i
+        if err != nil && err != io.ErrShortWrite {
+            return
+        }
+    }
+    return
+}
+
+func (h *SyntaxHandlerBD) Dump(data interface{}) (b []byte, err error) {
+    b = make([]byte, 0, 0)
+    switch data.(type) {
+        case map[string]interface{}:
+            for k, v := range data.(map[string]interface{}) {
+                var bb []byte
+                bb, err = h.dumpkv(k, v, 0)
+                if err != nil {
+                    return
+                }
+                b = append(b, bb...)
+            }
+        default:
+            err = &ConfError{"data is not a map", "", 0}
+    }
+    return
 }
